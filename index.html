@@ -222,39 +222,34 @@ function stopGame() {
 // (max 55°, within the 65° delta limit) for ~95° of total visible rotation.
 // Both axes interpolate together at 25 Hz with ease-in-out.
 
-const DEG  = Math.PI / 180;
-const BODY_TARGET = 160; // daemon will clamp to its own limit (~40°)
-const HEAD_YAW    = 55;  // degrees relative to body
+const DEG         = Math.PI / 180;
+const BODY_TARGET = 160; // daemon clamps to its effective limit (~90°)
 
 async function animateTurnAway(durationMs) {
-  const bStart = bodyYawDeg, hStart = headYawDeg;
-  const steps = Math.max(1, Math.round(durationMs / 40));
+  const bStart = bodyYawDeg;
+  const steps  = Math.max(1, Math.round(durationMs / 40));
   const stepMs = durationMs / steps;
   for (let i = 1; i <= steps; i++) {
     const t    = i / steps;
     const ease = t < 0.5 ? 2*t*t : -1+(4-2*t)*t;
     const b    = bStart + (BODY_TARGET - bStart) * ease;
-    const h    = hStart + (HEAD_YAW   - hStart) * ease;
-    const pitch = 15 * ease; // look down as we turn
     robot.setTarget({ body_yaw: b * DEG });
-    robot.setHeadRpyDeg(0, pitch, -h); // negative: head yaw sign is opposite to body yaw
+    robot.setHeadRpyDeg(0, 15 * ease, 0); // pitch down only — no head yaw
     await sleep(stepMs);
   }
   bodyYawDeg = BODY_TARGET;
-  headYawDeg = HEAD_YAW;
+  headYawDeg = 0;
 }
 
 async function animateTurnBack(durationMs) {
-  const bStart = bodyYawDeg, hStart = headYawDeg;
-  const steps = Math.max(1, Math.round(durationMs / 40));
+  const bStart = bodyYawDeg;
+  const steps  = Math.max(1, Math.round(durationMs / 40));
   const stepMs = durationMs / steps;
   for (let i = 1; i <= steps; i++) {
     const t    = i / steps;
     const ease = t < 0.5 ? 2*t*t : -1+(4-2*t)*t;
-    const b    = bStart * (1 - ease);
-    const h    = hStart * (1 - ease);
-    robot.setTarget({ body_yaw: b * DEG });
-    robot.setHeadRpyDeg(0, 0, -h); // same sign inversion
+    robot.setTarget({ body_yaw: bStart * (1 - ease) * DEG });
+    robot.setHeadRpyDeg(0, 0, 0);
     await sleep(stepMs);
   }
   bodyYawDeg = 0;
@@ -285,8 +280,7 @@ async function playRound() {
   startAntennaWiggle();
 
   for (const word of ['Un', 'deux', 'trois']) {
-    // vary pitch only — keep head yaw locked so we stay turned
-    robot.setHeadRpyDeg(0, 10 + Math.random() * 15, -HEAD_YAW);
+    robot.setHeadRpyDeg(0, 10 + Math.random() * 15, 0);
     await speak(word);
     if (!running) return;
     await sleep(300 + Math.random() * 800);
@@ -295,7 +289,7 @@ async function playRound() {
 
   await sleep(200 + Math.random() * 500);
   if (!running) return;
-  robot.setHeadRpyDeg(0, 5, -HEAD_YAW);
+  robot.setHeadRpyDeg(0, 5, 0);
   await speak('Soleil !');
   clearAntenna();
   if (!running) return;
