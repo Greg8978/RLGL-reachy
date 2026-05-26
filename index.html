@@ -127,6 +127,10 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       await robot.autoConnect({ pickRobot: robots => pickRobot(robots) });
     } catch (e) {
+      if (e.message?.toLowerCase().includes('not authenticated')) {
+        await robot.login(); // redirige vers HF OAuth, puis revient ici
+        return;
+      }
       connectStatus.textContent = e.message ?? 'Connexion échouée.';
       btnConnect.disabled = false;
       btnConnect.textContent = 'Réessayer';
