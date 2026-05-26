@@ -405,11 +405,32 @@ function diffAndPaint(a, b) {
   }
 
   overlayCtx.putImageData(heat, 0, 0);
-  return {
-    diff: sum / (d1.length / 4) / 3,
-    cx: wsum > 0 ? wx / wsum / w : 0.5,  // [0,1], 0=left 1=right
-    cy: wsum > 0 ? wy / wsum / h : 0.5,  // [0,1], 0=top 1=bottom
-  };
+
+  const cx = wsum > 0 ? wx / wsum / w : 0.5;
+  const cy = wsum > 0 ? wy / wsum / h : 0.5;
+
+  // Draw target crosshair at motion centroid when there is significant motion
+  if (wsum > 0) {
+    const tx = cx * w, ty = cy * h, r = Math.max(18, w * 0.04);
+    overlayCtx.save();
+    overlayCtx.strokeStyle = '#fff';
+    overlayCtx.lineWidth = 2;
+    overlayCtx.shadowColor = '#ff4400';
+    overlayCtx.shadowBlur = 8;
+    overlayCtx.beginPath();
+    overlayCtx.arc(tx, ty, r, 0, Math.PI * 2);
+    overlayCtx.stroke();
+    // Crosshair lines
+    overlayCtx.beginPath();
+    overlayCtx.moveTo(tx - r * 1.5, ty); overlayCtx.lineTo(tx - r * 0.4, ty);
+    overlayCtx.moveTo(tx + r * 0.4, ty); overlayCtx.lineTo(tx + r * 1.5, ty);
+    overlayCtx.moveTo(tx, ty - r * 1.5); overlayCtx.lineTo(tx, ty - r * 0.4);
+    overlayCtx.moveTo(tx, ty + r * 0.4); overlayCtx.lineTo(tx, ty + r * 1.5);
+    overlayCtx.stroke();
+    overlayCtx.restore();
+  }
+
+  return { diff: sum / (d1.length / 4) / 3, cx, cy };
 }
 
 function setMotionBar(v) {
