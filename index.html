@@ -37,6 +37,7 @@
   <div class="video-wrapper">
     <video id="robot-video" autoplay playsinline muted></video>
     <canvas id="motion-canvas" style="display:none"></canvas>
+    <canvas id="overlay-canvas" class="motion-overlay"></canvas>
     <div class="video-label">📷 Vue du robot</div>
   </div>
   <div id="video-debug" class="video-debug"></div>
@@ -90,6 +91,8 @@ const phaseSub       = qs('phase-sub');
 const robotVideo     = qs('robot-video');
 const motionCanvas   = qs('motion-canvas');
 const motionCtx      = motionCanvas.getContext('2d');
+const overlayCanvas  = qs('overlay-canvas');
+const overlayCtx     = overlayCanvas.getContext('2d');
 const motionFill     = qs('motion-fill');
 const motionValue    = qs('motion-value');
 const thresholdLine  = qs('threshold-line');
@@ -190,11 +193,15 @@ function pickRobot(robots) {
 }
 
 // ── Game control ───────────────────────────────────────────────────────────
-function startGame() {
+async function startGame() {
   running = true;
   round   = 0;
   btnGame.textContent = '⏹ Arrêter';
   btnGame.classList.add('danger');
+  // Force "enabled" so body_rotation responds to position commands.
+  // ensureAwake() uses gravity_compensation which lets the head float
+  // but may block body yaw commands.
+  await robot.setMotorMode('enabled');
   gameLoop();
 }
 
@@ -306,14 +313,10 @@ async function playRound() {
 }
 
 // ── Motion detection ───────────────────────────────────────────────────────
-//
-// Compares consecutive camera frames during `duration` ms.
-// Returns true if the max per-pixel average diff exceeds threshold.
-// Returns false if video feed is unavailable (no penalty).
-//
 async function detectMotion(duration) {
   if (!robotVideo.videoWidth) return false;
 
+  overlayCanvas.style.opacity = '1';
   const end = Date.now() + duration;
   let prev    = captureFrame();
   let maxDiff = 0;
@@ -321,17 +324,21 @@ async function detectMotion(duration) {
   while (Date.now() < end && running) {
     await sleep(80);
     const cur = captureFrame();
-    const d   = frameDiff(prev, cur);
+    const d   = diffAndPaint(prev, cur);
     if (d > maxDiff) maxDiff = d;
     setMotionBar(d);
     prev = cur;
   }
 
+  // Fade out overlay
+  overlayCanvas.style.opacity = '0';
+  overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
   setMotionBar(0);
   motionValue.textContent = maxDiff.toFixed(1);
   return maxDiff > threshold;
 }
 
+// Capture the current video frame onto the hidden canvas
 function captureFrame() {
   const w = robotVideo.videoWidth;
   const h = robotVideo.videoHeight;
@@ -342,17 +349,32 @@ function captureFrame() {
   return motionCtx.getImageData(0, 0, w, h);
 }
 
-// Average per-channel per-pixel absolute difference (0–255 scale)
-function frameDiff(a, b) {
+// Compare two frames, paint an orange heatmap on the overlay canvas,
+// and return the average per-pixel diff (0–255).
+function diffAndPaint(a, b) {
   if (!a || !b || a.data.length !== b.data.length) return 0;
+
+  const w = a.width, h = a.height;
+  overlayCanvas.width  = w;
+  overlayCanvas.height = h;
+
+  const heat = overlayCtx.createImageData(w, h);
+  const d1 = a.data, d2 = b.data, out = heat.data;
   let sum = 0;
-  const d1 = a.data, d2 = b.data, n = d1.length;
-  for (let i = 0; i < n; i += 4) {
-    sum += Math.abs(d1[i]   - d2[i]);
-    sum += Math.abs(d1[i+1] - d2[i+1]);
-    sum += Math.abs(d1[i+2] - d2[i+2]);
+
+  for (let i = 0; i < d1.length; i += 4) {
+    const px = (Math.abs(d1[i]-d2[i]) + Math.abs(d1[i+1]-d2[i+1]) + Math.abs(d1[i+2]-d2[i+2])) / 3;
+    sum += px;
+    if (px > 10) {                        // per-pixel sensitivity
+      out[i]   = 255;                     // R
+      out[i+1] = Math.max(0, 120 - px);  // G  (more motion → more red)
+      out[i+2] = 0;                       // B
+      out[i+3] = Math.min(230, px * 6);  // alpha proportional to motion
+    }
   }
-  return sum / (n / 4) / 3;
+
+  overlayCtx.putImageData(heat, 0, 0);
+  return sum / (d1.length / 4) / 3;
 }
 
 function setMotionBar(v) {
