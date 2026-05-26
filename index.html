@@ -344,8 +344,8 @@ async function playRound() {
   // ── 6. React ────────────────────────────────────────────────────────────
   if (caught) {
     // cx/cy in [0,1]: map centroid to head angles (wider range for visibility)
-    const accuseYaw   = (0.5 - cx) * 100; // ±50°: left in image = negative cx → positive (left) yaw
-    const accusePitch = (cy - 0.5) *  50; // ±25°: bottom in image → look down
+    const accuseYaw   = (0.5 - cx) * 85; // ±42.5°
+    const accusePitch = (cy - 0.5) * 42.5; // ±21°
     accuseDebug.textContent = `cible cx=${cx.toFixed(2)} cy=${cy.toFixed(2)} → yaw=${accuseYaw.toFixed(1)}° pitch=${accusePitch.toFixed(1)}°`;
     setPhase('🚨', 'JE T\'AI VU !', 'Tu as perdu !');
     robot.setAntennasDeg(60, 60);
