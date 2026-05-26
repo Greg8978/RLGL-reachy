@@ -374,17 +374,17 @@ async function detectMotion(duration) {
   const end = Date.now() + duration;
   let prev    = captureFrame();
   let maxDiff = 0;
-  // Use last frame where motion exceeded threshold: that's where the player
-  // actually was when caught, not where they started moving from.
+  // Track last frame where the crosshair was visible (wsum>0 = real per-pixel motion),
+  // not last frame where global d>threshold (which can trigger on noise with wsum=0).
   let lastCx = 0.5, lastCy = 0.5;
   let alertPlayed = false;
 
   while (Date.now() < end && running) {
     await sleep(80);
     const cur = captureFrame();
-    const { diff: d, cx, cy } = diffAndPaint(prev, cur);
+    const { diff: d, cx, cy, wsum } = diffAndPaint(prev, cur);
     if (d > maxDiff) maxDiff = d;
-    if (d > threshold) { lastCx = cx; lastCy = cy; }
+    if (wsum > 0) { lastCx = cx; lastCy = cy; } // crosshair is visible → real position
     setMotionBar(d);
     if (!alertPlayed && d > threshold) {
       alertPlayed = true;
@@ -444,7 +444,6 @@ function diffAndPaint(a, b) {
   const cx = wsum > 0 ? wx / wsum / w : 0.5;
   const cy = wsum > 0 ? wy / wsum / h : 0.5;
 
-  // Draw target crosshair at motion centroid when there is significant motion
   if (wsum > 0) {
     const tx = cx * w, ty = cy * h, r = Math.max(18, w * 0.04);
     overlayCtx.save();
@@ -465,7 +464,7 @@ function diffAndPaint(a, b) {
     overlayCtx.restore();
   }
 
-  return { diff: sum / (d1.length / 4) / 3, cx, cy };
+  return { diff: sum / (d1.length / 4) / 3, cx, cy, wsum };
 }
 
 function setMotionBar(v) {
