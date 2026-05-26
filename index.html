@@ -41,6 +41,7 @@
     <div class="video-label">📷 Vue du robot</div>
   </div>
   <div id="video-debug" class="video-debug"></div>
+  <div id="accuse-debug" class="video-debug"></div>
 
   <div class="motion-section">
     <div class="motion-label">
@@ -100,6 +101,7 @@ const motionValue    = qs('motion-value');
 const thresholdLine  = qs('threshold-line');
 const thresholdSlider = qs('threshold-slider');
 const thresholdDisplay = qs('threshold-display');
+const accuseDebug = qs('accuse-debug');
 
 // ── Video — attach early (lazy: wires when track arrives) ─────────────────
 robot.attachVideo(robotVideo);
@@ -222,6 +224,11 @@ function setHead(pitch, yaw) {
   headPitchDeg = pitch;
   headYawDeg   = yaw;
   robot.setHeadRpyDeg(0, pitch, yaw);
+  // Live head command display (only if debug div exists and is populated)
+  if (accuseDebug && accuseDebug.textContent) {
+    const m = accuseDebug.textContent.match(/^(cible [^→]+→)/);
+    if (m) accuseDebug.textContent = `${m[1]} tête pitch=${pitch.toFixed(1)}° yaw=${yaw.toFixed(1)}°`;
+  }
 }
 
 async function animateHeadTo(toPitch, toYaw, durationMs) {
@@ -339,6 +346,7 @@ async function playRound() {
     // cx/cy in [0,1]: map centroid to head angles (wider range for visibility)
     const accuseYaw   = (0.5 - cx) * 100; // ±50°: left in image = negative cx → positive (left) yaw
     const accusePitch = (cy - 0.5) *  50; // ±25°: bottom in image → look down
+    accuseDebug.textContent = `cible cx=${cx.toFixed(2)} cy=${cy.toFixed(2)} → yaw=${accuseYaw.toFixed(1)}° pitch=${accusePitch.toFixed(1)}°`;
     setPhase('🚨', 'JE T\'AI VU !', 'Tu as perdu !');
     robot.setAntennasDeg(60, 60);
     // Snap up (surprise), then smoothly look at the guilty player
