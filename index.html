@@ -337,8 +337,8 @@ async function playRound() {
   // ── 6. React ────────────────────────────────────────────────────────────
   if (caught) {
     // cx/cy in [0,1]: map centroid to head angles (wider range for visibility)
-    const accuseYaw   = (cx - 0.5) * 100; // ±50° left/right
-    const accusePitch = (cy - 0.5) *  50; // ±25° top/bottom
+    const accuseYaw   = (0.5 - cx) * 100; // ±50°: left in image = negative cx → positive (left) yaw
+    const accusePitch = (cy - 0.5) *  50; // ±25°: bottom in image → look down
     setPhase('🚨', 'JE T\'AI VU !', 'Tu as perdu !');
     robot.setAntennasDeg(60, 60);
     // Snap up (surprise), then smoothly look at the guilty player
@@ -366,18 +366,17 @@ async function detectMotion(duration) {
   const end = Date.now() + duration;
   let prev    = captureFrame();
   let maxDiff = 0;
-  // Accumulate centroid across all frames, weighted by per-frame diff
-  let sumCx = 0, sumCy = 0, sumW = 0;
+  let bestCx  = 0.5, bestCy = 0.5;
   let alertPlayed = false;
 
   while (Date.now() < end && running) {
     await sleep(80);
     const cur = captureFrame();
     const { diff: d, cx, cy } = diffAndPaint(prev, cur);
-    if (d > maxDiff) maxDiff = d;
-    if (d > 0) { sumCx += cx * d; sumCy += cy * d; sumW += d; }
+    // Track centroid from the peak-motion frame (most signal, least noise)
+    if (d > maxDiff) { maxDiff = d; bestCx = cx; bestCy = cy; }
     setMotionBar(d);
-    // Play alert beep as soon as motion exceeds threshold
+    // Play alert beep as soon as motion first exceeds threshold
     if (!alertPlayed && d > threshold) {
       alertPlayed = true;
       robot.playSound('count.wav');
@@ -389,8 +388,6 @@ async function detectMotion(duration) {
   overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
   setMotionBar(0);
   motionValue.textContent = maxDiff.toFixed(1);
-  const bestCx = sumW > 0 ? sumCx / sumW : 0.5;
-  const bestCy = sumW > 0 ? sumCy / sumW : 0.5;
   return { caught: maxDiff > threshold, cx: bestCx, cy: bestCy };
 }
 
