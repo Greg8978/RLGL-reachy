@@ -72,6 +72,7 @@ let running    = false;
 let round      = 0;
 let threshold  = 10;
 let antennaTimer = null;
+let bodyYawDeg = 0; // track current body target so we can interpolate from it
 
 // ── DOM ────────────────────────────────────────────────────────────────────
 const qs = id => document.getElementById(id);
@@ -203,10 +204,25 @@ function stopGame() {
   clearAntenna();
   btnGame.textContent = '▶ Commencer';
   btnGame.classList.remove('danger');
-  robot.setBodyYawDeg(0);
+  gotoBodyYaw(0, 800);
   robot.setHeadRpyDeg(0, 0, 0);
   robot.setAntennasDeg(0, 0);
   setPhase('🤖', 'Jeu arrêté', 'Appuie sur Commencer pour rejouer');
+}
+
+// ── Smooth body rotation — mirrors Python _goto_joint_positions(duration) ──
+// Sends setBodyYawDeg at ~25 Hz with ease-in-out so the motor follows smoothly.
+async function gotoBodyYaw(targetDeg, durationMs) {
+  const start = bodyYawDeg;
+  const steps = Math.max(1, Math.round(durationMs / 40));
+  const stepMs = durationMs / steps;
+  for (let i = 1; i <= steps; i++) {
+    const t = i / steps;
+    const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t; // ease-in-out
+    robot.setBodyYawDeg(start + (targetDeg - start) * ease);
+    await sleep(stepMs);
+  }
+  bodyYawDeg = targetDeg;
 }
 
 // ── Game loop ──────────────────────────────────────────────────────────────
@@ -215,19 +231,18 @@ async function gameLoop() {
     round++;
     roundBadge.textContent = `Tour ${round}`;
     await playRound();
-    if (running) await sleep(700);
+    if (running) await sleep(500);
   }
 }
 
 async function playRound() {
 
-  // ── 1. Turn away ────────────────────────────────────────────────────────
+  // ── 1. Turn away — smooth 2 s, like Python duration=2.0 ─────────────────
   setPhase('🔄', 'Je me retourne…', '');
   clearAntenna();
   robot.setAntennasDeg(-15, -15);
-  robot.setHeadRpyDeg(0, 20, 0);     // look down (pitching forward)
-  robot.setBodyYawDeg(160);           // max yaw = fully turned away
-  await sleep(2500);                  // wait for body rotation to complete
+  robot.setHeadRpyDeg(0, 20, 0);
+  await gotoBodyYaw(160, 2000);
   if (!running) return;
 
   // ── 2. Count aloud ──────────────────────────────────────────────────────
@@ -238,29 +253,26 @@ async function playRound() {
     robot.setHeadRpyDeg(0, 10 + Math.random() * 15, (Math.random() - 0.5) * 25);
     await speak(word);
     if (!running) return;
-    await sleep(250 + Math.random() * 750);
+    await sleep(300 + Math.random() * 800);
     if (!running) return;
   }
 
-  // Dramatic pause before the snap
-  await sleep(200 + Math.random() * 600);
+  await sleep(200 + Math.random() * 500);
   if (!running) return;
-
   robot.setHeadRpyDeg(0, 5, 0);
   await speak('Soleil !');
   clearAntenna();
   if (!running) return;
 
-  // ── 3. Snap back ────────────────────────────────────────────────────────
+  // ── 3. Snap back — fast 0.5 s, like Python goto_target(duration=0.5) ────
   setPhase('👀', 'SOLEIL !', '');
   robot.setAntennasDeg(30, 30);
-  robot.setBodyYawDeg(0);
   robot.setHeadRpyDeg(0, 0, 0);
-  // Wait for body to physically return to 0° — needs at least 2s from 160°
-  await sleep(2200);
+  await gotoBodyYaw(0, 500);
+  await sleep(300); // let camera settle before scanning
   if (!running) return;
 
-  // ── 4. Theatrical head scan (before detection window) ───────────────────
+  // ── 4. Theatrical head scan ──────────────────────────────────────────────
   setPhase('🔍', 'Qui a bougé ?', 'IMMOBILES !');
   robot.setAntennasDeg(50, 50);
   robot.setHeadRpyDeg(0, 0, -35);
@@ -268,10 +280,10 @@ async function playRound() {
   robot.setHeadRpyDeg(0, 0, 35);
   await sleep(500);
   robot.setHeadRpyDeg(0, 0, 0);
-  await sleep(400);                   // settle before capturing frames
+  await sleep(400);
   if (!running) return;
 
-  // ── 5. Detect motion — scan 4 s like the official app ───────────────────
+  // ── 5. Detect motion (4 s) ──────────────────────────────────────────────
   const caught = await detectMotion(4000);
   if (!running) return;
 
