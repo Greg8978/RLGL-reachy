@@ -208,7 +208,6 @@ async function startGame() {
 
 function stopGame() {
   running = false;
-  if (window.speechSynthesis) speechSynthesis.cancel();
   clearAntenna();
   btnGame.textContent = '▶ Commencer';
   btnGame.classList.remove('danger');
@@ -281,18 +280,18 @@ async function playRound() {
   setPhase('🔢', 'Un, deux, trois…', 'Vous pouvez bouger !');
   startAntennaWiggle();
 
-  for (const word of ['Un', 'deux', 'trois']) {
+  for (let i = 0; i < 3; i++) {
     robot.setHeadRpyDeg(0, 10 + Math.random() * 15, BODY_TARGET);
-    await speak(word);
-    if (!running) return;
-    await sleep(300 + Math.random() * 800);
+    robot.playSound('count.wav');
+    await sleep(600 + Math.random() * 800);
     if (!running) return;
   }
 
-  await sleep(200 + Math.random() * 500);
+  await sleep(200 + Math.random() * 400);
   if (!running) return;
   robot.setHeadRpyDeg(0, 5, BODY_TARGET);
-  await speak('Soleil !');
+  robot.playSound('dance1.wav');
+  await sleep(800);
   clearAntenna();
   if (!running) return;
 
@@ -306,6 +305,7 @@ async function playRound() {
   // ── 4. Theatrical head scan ──────────────────────────────────────────────
   setPhase('🔍', 'Qui a bougé ?', 'IMMOBILES !');
   robot.setAntennasDeg(50, 50);
+  robot.playSound('confused1.wav');
   robot.setHeadRpyDeg(0, 0, -35);
   await sleep(500);
   robot.setHeadRpyDeg(0, 0, 35);
@@ -315,16 +315,19 @@ async function playRound() {
   if (!running) return;
 
   // ── 5. Detect motion (4 s) ──────────────────────────────────────────────
-  const caught = await detectMotion(4000);
+  const { caught, cx, cy } = await detectMotion(4000);
   if (!running) return;
 
   // ── 6. React ────────────────────────────────────────────────────────────
   if (caught) {
+    // cx/cy in [0,1]: convert centroid to head angles to "accuse" the mover
+    const accuseYaw   = (cx - 0.5) * 70;  // left/right in image → head yaw
+    const accusePitch = (cy - 0.5) * 30;  // top/bottom in image → head pitch
     setPhase('🚨', 'JE T\'AI VU !', 'Tu as perdu !');
     robot.setAntennasDeg(60, 60);
-    robot.setHeadRpyDeg(0, -15, (Math.random() - 0.5) * 50);
-    await speak("Tu as perdu, je t'ai vu bouger !");
-    await sleep(800);
+    robot.setHeadRpyDeg(0, accusePitch, accuseYaw);
+    robot.playSound('impatient1.wav');
+    await sleep(2500);
     robot.setAntennasDeg(0, 0);
     robot.setHeadRpyDeg(0, 0, 0);
     await sleep(400);
@@ -338,28 +341,28 @@ async function playRound() {
 
 // ── Motion detection ───────────────────────────────────────────────────────
 async function detectMotion(duration) {
-  if (!robotVideo.videoWidth) return false;
+  if (!robotVideo.videoWidth) return { caught: false, cx: 0.5, cy: 0.5 };
 
   overlayCanvas.style.opacity = '1';
   const end = Date.now() + duration;
   let prev    = captureFrame();
   let maxDiff = 0;
+  let bestCx  = 0.5, bestCy = 0.5;
 
   while (Date.now() < end && running) {
     await sleep(80);
     const cur = captureFrame();
-    const d   = diffAndPaint(prev, cur);
-    if (d > maxDiff) maxDiff = d;
+    const { diff: d, cx, cy } = diffAndPaint(prev, cur);
+    if (d > maxDiff) { maxDiff = d; bestCx = cx; bestCy = cy; }
     setMotionBar(d);
     prev = cur;
   }
 
-  // Fade out overlay
   overlayCanvas.style.opacity = '0';
   overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
   setMotionBar(0);
   motionValue.textContent = maxDiff.toFixed(1);
-  return maxDiff > threshold;
+  return { caught: maxDiff > threshold, cx: bestCx, cy: bestCy };
 }
 
 // Capture the current video frame onto the hidden canvas
@@ -374,9 +377,9 @@ function captureFrame() {
 }
 
 // Compare two frames, paint an orange heatmap on the overlay canvas,
-// and return the average per-pixel diff (0–255).
+// and return the average per-pixel diff plus the weighted motion centroid in [0,1].
 function diffAndPaint(a, b) {
-  if (!a || !b || a.data.length !== b.data.length) return 0;
+  if (!a || !b || a.data.length !== b.data.length) return { diff: 0, cx: 0.5, cy: 0.5 };
 
   const w = a.width, h = a.height;
   overlayCanvas.width  = w;
@@ -384,21 +387,29 @@ function diffAndPaint(a, b) {
 
   const heat = overlayCtx.createImageData(w, h);
   const d1 = a.data, d2 = b.data, out = heat.data;
-  let sum = 0;
+  let sum = 0, wx = 0, wy = 0, wsum = 0;
 
   for (let i = 0; i < d1.length; i += 4) {
     const px = (Math.abs(d1[i]-d2[i]) + Math.abs(d1[i+1]-d2[i+1]) + Math.abs(d1[i+2]-d2[i+2])) / 3;
     sum += px;
-    if (px > 10) {                        // per-pixel sensitivity
-      out[i]   = 255;                     // R
-      out[i+1] = Math.max(0, 120 - px);  // G  (more motion → more red)
-      out[i+2] = 0;                       // B
-      out[i+3] = Math.min(230, px * 6);  // alpha proportional to motion
+    if (px > 10) {
+      out[i]   = 255;
+      out[i+1] = Math.max(0, 120 - px);
+      out[i+2] = 0;
+      out[i+3] = Math.min(230, px * 6);
+      const pi = i >> 2;
+      wx   += (pi % w) * px;
+      wy   += Math.floor(pi / w) * px;
+      wsum += px;
     }
   }
 
   overlayCtx.putImageData(heat, 0, 0);
-  return sum / (d1.length / 4) / 3;
+  return {
+    diff: sum / (d1.length / 4) / 3,
+    cx: wsum > 0 ? wx / wsum / w : 0.5,  // [0,1], 0=left 1=right
+    cy: wsum > 0 ? wy / wsum / h : 0.5,  // [0,1], 0=top 1=bottom
+  };
 }
 
 function setMotionBar(v) {
@@ -419,22 +430,6 @@ function startAntennaWiggle() {
 
 function clearAntenna() {
   if (antennaTimer) { clearInterval(antennaTimer); antennaTimer = null; }
-}
-
-// ── Speech (browser TTS in French) ────────────────────────────────────────
-function speak(text) {
-  return new Promise(resolve => {
-    if (!window.speechSynthesis) { resolve(); return; }
-    speechSynthesis.cancel();
-    const u    = new SpeechSynthesisUtterance(text);
-    u.lang     = 'fr-FR';
-    u.rate     = 0.88;
-    u.pitch    = 1.05;
-    const t    = setTimeout(resolve, 8000); // safety net
-    u.onend    = () => { clearTimeout(t); resolve(); };
-    u.onerror  = () => { clearTimeout(t); resolve(); };
-    speechSynthesis.speak(u);
-  });
 }
 
 // ── Utilities ──────────────────────────────────────────────────────────────
