@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>1, 2, 3 Soleil 🚦</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ── Connection panel ────────────────────────────────────────────────── -->
+<div id="connect-panel">
+  <div class="card">
+    <div class="game-icon">🚦</div>
+    <h1>1, 2, 3 Soleil</h1>
+    <p class="subtitle">Le jeu Red Light Green Light<br>avec Reachy Mini</p>
+    <div id="robot-picker"></div>
+    <button id="btn-connect">Se connecter</button>
+    <p id="connect-status"></p>
+  </div>
+</div>
+
+<!-- ── Game panel ─────────────────────────────────────────────────────── -->
+<div id="game-panel" class="hidden">
+
+  <div class="game-header">
+    <div class="round-badge" id="round-badge">Tour 1</div>
+    <button id="btn-disconnect" class="btn-small">✕ Déconnecter</button>
+  </div>
+
+  <div id="phase-display">
+    <div id="phase-emoji">🤖</div>
+    <div id="phase-text">Prêt !</div>
+    <div id="phase-sub"></div>
+  </div>
+
+  <div class="video-wrapper">
+    <video id="robot-video" autoplay playsinline muted></video>
+    <!-- Hidden canvas used only for frame capture -->
+    <canvas id="motion-canvas" style="display:none"></canvas>
+    <div class="video-label">📷 Vue du robot</div>
+  </div>
+
+  <div class="motion-section">
+    <div class="motion-label">
+      <span>Mouvement détecté</span>
+      <span id="motion-value">–</span>
+    </div>
+    <div class="motion-track">
+      <div class="motion-fill" id="motion-fill"></div>
+      <div class="motion-threshold-line" id="threshold-line"></div>
+    </div>
+  </div>
+
+  <div class="controls-section">
+    <label class="slider-label">
+      Seuil de détection : <strong id="threshold-display">10</strong>
+      <input type="range" id="threshold-slider" min="1" max="50" value="10">
+      <span class="slider-hints"><span>Sensible</span><span>Tolérant</span></span>
+    </label>
+    <button id="btn-game" class="btn-game">▶ Commencer</button>
+  </div>
+
+</div>
+
+<script type="module">
+import { ReachyMini } from "https://cdn.jsdelivr.net/gh/pollen-robotics/reachy_mini@v1.7.3/js/reachy-mini.js";
+
+// ── State ──────────────────────────────────────────────────────────────────
+const robot = new ReachyMini({ appName: "rlgl-123-soleil" });
+let running    = false;
+let round      = 0;
+let threshold  = 10;
+let antennaTimer = null;
+
+// ── DOM ────────────────────────────────────────────────────────────────────
+const qs = id => document.getElementById(id);
+
+const connectPanel   = qs('connect-panel');
+const gamePanel      = qs('game-panel');
+const btnConnect     = qs('btn-connect');
+const btnDisconnect  = qs('btn-disconnect');
+const btnGame        = qs('btn-game');
+const connectStatus  = qs('connect-status');
+const roundBadge     = qs('round-badge');
+const phaseEmoji     = qs('phase-emoji');
+const phaseText      = qs('phase-text');
+const phaseSub       = qs('phase-sub');
+const robotVideo     = qs('robot-video');
+const motionCanvas   = qs('motion-canvas');
+const motionCtx      = motionCanvas.getContext('2d');
+const motionFill     = qs('motion-fill');
+const motionValue    = qs('motion-value');
+const thresholdLine  = qs('threshold-line');
+const thresholdSlider = qs('threshold-slider');
+const thresholdDisplay = qs('threshold-display');
+
+// ── SDK events ─────────────────────────────────────────────────────────────
+robot.addEventListener('streaming', () => {
+  robot.attachVideo(robotVideo);
+  show(gamePanel);
+  hide(connectPanel);
+  setPhase('🤖', 'Prêt à jouer !', 'Appuie sur Commencer');
+});
+
+robot.addEventListener('disconnected', () => {
+  stopGame();
+  show(connectPanel);
+  hide(gamePanel);
+  connectStatus.textContent = 'Déconnecté.';
+  btnConnect.disabled = false;
+  btnConnect.textContent = 'Se connecter';
+});
+
+robot.addEventListener('error', e => {
+  connectStatus.textContent = `Erreur : ${e.detail?.message ?? 'inconnue'}`;
+});
+
+// ── Boot ───────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  positionThresholdLine();
+
+  btnConnect.addEventListener('click', async () => {
+    btnConnect.disabled = true;
+    btnConnect.textContent = 'Connexion…';
+    connectStatus.textContent = '';
+    try {
+      await robot.autoConnect({ pickRobot: robots => pickRobot(robots) });
+    } catch (e) {
+      connectStatus.textContent = e.message ?? 'Connexion échouée.';
+      btnConnect.disabled = false;
+      btnConnect.textContent = 'Réessayer';
+    }
+  });
+
+  btnDisconnect.addEventListener('click', () => {
+    stopGame();
+    robot.stopSession();
+    robot.disconnect();
+  });
+
+  btnGame.addEventListener('click', () => running ? stopGame() : startGame());
+
+  thresholdSlider.addEventListener('input', () => {
+    threshold = Number(thresholdSlider.value);
+    thresholdDisplay.textContent = threshold;
+    positionThresholdLine();
+  });
+});
+
+function positionThresholdLine() {
+  thresholdLine.style.left = `${(threshold / 50) * 100}%`;
+}
+
+// ── Robot picker ───────────────────────────────────────────────────────────
+function pickRobot(robots) {
+  return new Promise((resolve, reject) => {
+    const picker = qs('robot-picker');
+    picker.innerHTML = '<p class="picker-label">Choisir un robot :</p>';
+    robots.forEach(r => {
+      const btn = document.createElement('button');
+      btn.className = 'picker-btn';
+      btn.textContent = r.name || r.id;
+      btn.onclick = () => { picker.innerHTML = ''; resolve(r.id); };
+      picker.appendChild(btn);
+    });
+  });
+}
+
+// ── Game control ───────────────────────────────────────────────────────────
+function startGame() {
+  running = true;
+  round   = 0;
+  btnGame.textContent = '⏹ Arrêter';
+  btnGame.classList.add('danger');
+  gameLoop();
+}
+
+function stopGame() {
+  running = false;
+  if (window.speechSynthesis) speechSynthesis.cancel();
+  clearAntenna();
+  btnGame.textContent = '▶ Commencer';
+  btnGame.classList.remove('danger');
+  robot.setBodyYawDeg(0);
+  robot.setHeadRpyDeg(0, 0, 0);
+  robot.setAntennasDeg(0, 0);
+  setPhase('🤖', 'Jeu arrêté', 'Appuie sur Commencer pour rejouer');
+}
+
+// ── Game loop ──────────────────────────────────────────────────────────────
+async function gameLoop() {
+  while (running) {
+    round++;
+    roundBadge.textContent = `Tour ${round}`;
+    await playRound();
+    if (running) await sleep(700);
+  }
+}
+
+async function playRound() {
+
+  // ── 1. Turn away ────────────────────────────────────────────────────────
+  setPhase('🔄', 'Je me retourne…', '');
+  clearAntenna();
+  robot.setAntennasDeg(-15, -15);
+  robot.setHeadRpyDeg(0, 20, 0);     // look down (pitching forward)
+  robot.setBodyYawDeg(155);
+  await sleep(1600);                  // wait for body rotation to complete
+  if (!running) return;
+
+  // ── 2. Count aloud ──────────────────────────────────────────────────────
+  setPhase('🔢', 'Un, deux, trois…', 'Vous pouvez bouger !');
+  startAntennaWiggle();
+
+  for (const word of ['Un', 'deux', 'trois']) {
+    robot.setHeadRpyDeg(0, 10 + Math.random() * 15, (Math.random() - 0.5) * 25);
+    await speak(word);
+    if (!running) return;
+    await sleep(250 + Math.random() * 750);
+    if (!running) return;
+  }
+
+  // Dramatic pause before the snap
+  await sleep(200 + Math.random() * 600);
+  if (!running) return;
+
+  robot.setHeadRpyDeg(0, 5, 0);
+  await speak('Soleil !');
+  clearAntenna();
+  if (!running) return;
+
+  // ── 3. Snap back ────────────────────────────────────────────────────────
+  setPhase('👀', 'SOLEIL !', '');
+  robot.setAntennasDeg(30, 30);
+  robot.setBodyYawDeg(0);
+  robot.setHeadRpyDeg(0, 0, 0);
+  // Wait for body to physically return to 0° before scanning
+  await sleep(1300);
+  if (!running) return;
+
+  // ── 4. Theatrical head scan (before detection window) ───────────────────
+  setPhase('🔍', 'Qui a bougé ?', 'IMMOBILES !');
+  robot.setAntennasDeg(50, 50);
+  robot.setHeadRpyDeg(0, 0, -35);
+  await sleep(350);
+  robot.setHeadRpyDeg(0, 0, 35);
+  await sleep(350);
+  robot.setHeadRpyDeg(0, 0, 0);
+  await sleep(350);                   // settle before capturing frames
+  if (!running) return;
+
+  // ── 5. Detect motion (head is now still) ────────────────────────────────
+  const caught = await detectMotion(900);
+  if (!running) return;
+
+  // ── 6. React ────────────────────────────────────────────────────────────
+  if (caught) {
+    setPhase('🚨', 'JE T\'AI VU !', 'Tu as perdu !');
+    robot.setAntennasDeg(60, 60);
+    robot.setHeadRpyDeg(0, -15, (Math.random() - 0.5) * 50);
+    await speak("Tu as perdu, je t'ai vu bouger !");
+    await sleep(800);
+    robot.setAntennasDeg(0, 0);
+    robot.setHeadRpyDeg(0, 0, 0);
+    await sleep(400);
+  } else {
+    setPhase('✅', 'Bien joué !', 'Personne n\'a bougé');
+    robot.setAntennasDeg(0, 0);
+    robot.setHeadRpyDeg(0, 0, 0);
+    await sleep(600);
+  }
+}
+
+// ── Motion detection ───────────────────────────────────────────────────────
+//
+// Compares consecutive camera frames during `duration` ms.
+// Returns true if the max per-pixel average diff exceeds threshold.
+// Returns false if video feed is unavailable (no penalty).
+//
+async function detectMotion(duration) {
+  if (!robotVideo.videoWidth) return false;
+
+  const end = Date.now() + duration;
+  let prev    = captureFrame();
+  let maxDiff = 0;
+
+  while (Date.now() < end && running) {
+    await sleep(80);
+    const cur = captureFrame();
+    const d   = frameDiff(prev, cur);
+    if (d > maxDiff) maxDiff = d;
+    setMotionBar(d);
+    prev = cur;
+  }
+
+  setMotionBar(0);
+  motionValue.textContent = maxDiff.toFixed(1);
+  return maxDiff > threshold;
+}
+
+function captureFrame() {
+  const w = robotVideo.videoWidth;
+  const h = robotVideo.videoHeight;
+  if (!w || !h) return null;
+  motionCanvas.width  = w;
+  motionCanvas.height = h;
+  motionCtx.drawImage(robotVideo, 0, 0);
+  return motionCtx.getImageData(0, 0, w, h);
+}
+
+// Average per-channel per-pixel absolute difference (0–255 scale)
+function frameDiff(a, b) {
+  if (!a || !b || a.data.length !== b.data.length) return 0;
+  let sum = 0;
+  const d1 = a.data, d2 = b.data, n = d1.length;
+  for (let i = 0; i < n; i += 4) {
+    sum += Math.abs(d1[i]   - d2[i]);
+    sum += Math.abs(d1[i+1] - d2[i+1]);
+    sum += Math.abs(d1[i+2] - d2[i+2]);
+  }
+  return sum / (n / 4) / 3;
+}
+
+function setMotionBar(v) {
+  const pct = Math.min((v / 50) * 100, 100);
+  motionFill.style.width      = `${pct}%`;
+  motionFill.style.background = v > threshold ? '#e74c3c' : '#2ecc71';
+}
+
+// ── Antenna animation ──────────────────────────────────────────────────────
+function startAntennaWiggle() {
+  let t = 0;
+  antennaTimer = setInterval(() => {
+    const a = 40 * Math.sin(t * 1.1);
+    robot.setAntennasDeg(a, -a);
+    t++;
+  }, 110);
+}
+
+function clearAntenna() {
+  if (antennaTimer) { clearInterval(antennaTimer); antennaTimer = null; }
+}
+
+// ── Speech (browser TTS in French) ────────────────────────────────────────
+function speak(text) {
+  return new Promise(resolve => {
+    if (!window.speechSynthesis) { resolve(); return; }
+    speechSynthesis.cancel();
+    const u    = new SpeechSynthesisUtterance(text);
+    u.lang     = 'fr-FR';
+    u.rate     = 0.88;
+    u.pitch    = 1.05;
+    const t    = setTimeout(resolve, 8000); // safety net
+    u.onend    = () => { clearTimeout(t); resolve(); };
+    u.onerror  = () => { clearTimeout(t); resolve(); };
+    speechSynthesis.speak(u);
+  });
+}
+
+// ── Utilities ──────────────────────────────────────────────────────────────
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const show  = el => el.classList.remove('hidden');
+const hide  = el => el.classList.add('hidden');
+
+function setPhase(emoji, text, sub) {
+  phaseEmoji.textContent = emoji;
+  phaseText.textContent  = text;
+  phaseSub.textContent   = sub;
+}
+</script>
+</body>
+</html>
