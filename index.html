@@ -237,7 +237,7 @@ async function animateTurnAway(durationMs) {
     const h    = hStart + (HEAD_YAW   - hStart) * ease;
     const pitch = 15 * ease; // look down as we turn
     robot.setTarget({ body_yaw: b * DEG });
-    robot.setHeadRpyDeg(0, pitch, h);
+    robot.setHeadRpyDeg(0, pitch, -h); // negative: head yaw sign is opposite to body yaw
     await sleep(stepMs);
   }
   bodyYawDeg = BODY_TARGET;
@@ -254,7 +254,7 @@ async function animateTurnBack(durationMs) {
     const b    = bStart * (1 - ease);
     const h    = hStart * (1 - ease);
     robot.setTarget({ body_yaw: b * DEG });
-    robot.setHeadRpyDeg(0, 0, h);
+    robot.setHeadRpyDeg(0, 0, -h); // same sign inversion
     await sleep(stepMs);
   }
   bodyYawDeg = 0;
@@ -285,8 +285,8 @@ async function playRound() {
   startAntennaWiggle();
 
   for (const word of ['Un', 'deux', 'trois']) {
-    // vary pitch only — keep head yaw locked to HEAD_YAW so we stay turned
-    robot.setHeadRpyDeg(0, 10 + Math.random() * 15, HEAD_YAW);
+    // vary pitch only — keep head yaw locked so we stay turned
+    robot.setHeadRpyDeg(0, 10 + Math.random() * 15, -HEAD_YAW);
     await speak(word);
     if (!running) return;
     await sleep(300 + Math.random() * 800);
@@ -295,7 +295,7 @@ async function playRound() {
 
   await sleep(200 + Math.random() * 500);
   if (!running) return;
-  robot.setHeadRpyDeg(0, 5, HEAD_YAW);
+  robot.setHeadRpyDeg(0, 5, -HEAD_YAW);
   await speak('Soleil !');
   clearAntenna();
   if (!running) return;
