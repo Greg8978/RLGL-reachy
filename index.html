@@ -98,9 +98,16 @@ const thresholdDisplay = qs('threshold-display');
 // ── SDK events ─────────────────────────────────────────────────────────────
 robot.addEventListener('streaming', () => {
   robot.attachVideo(robotVideo);
+  robotVideo.play().catch(() => {});
   show(gamePanel);
   hide(connectPanel);
   setPhase('🤖', 'Prêt à jouer !', 'Appuie sur Commencer');
+});
+
+// Backup: reattach if the video track arrives after the streaming event
+robot.addEventListener('videoTrack', () => {
+  robot.attachVideo(robotVideo);
+  robotVideo.play().catch(() => {});
 });
 
 robot.addEventListener('disconnected', () => {
@@ -209,8 +216,8 @@ async function playRound() {
   clearAntenna();
   robot.setAntennasDeg(-15, -15);
   robot.setHeadRpyDeg(0, 20, 0);     // look down (pitching forward)
-  robot.setBodyYawDeg(155);
-  await sleep(1600);                  // wait for body rotation to complete
+  robot.setBodyYawDeg(160);           // max yaw = fully turned away
+  await sleep(2500);                  // wait for body rotation to complete
   if (!running) return;
 
   // ── 2. Count aloud ──────────────────────────────────────────────────────
@@ -239,23 +246,23 @@ async function playRound() {
   robot.setAntennasDeg(30, 30);
   robot.setBodyYawDeg(0);
   robot.setHeadRpyDeg(0, 0, 0);
-  // Wait for body to physically return to 0° before scanning
-  await sleep(1300);
+  // Wait for body to physically return to 0° — needs at least 2s from 160°
+  await sleep(2200);
   if (!running) return;
 
   // ── 4. Theatrical head scan (before detection window) ───────────────────
   setPhase('🔍', 'Qui a bougé ?', 'IMMOBILES !');
   robot.setAntennasDeg(50, 50);
   robot.setHeadRpyDeg(0, 0, -35);
-  await sleep(350);
+  await sleep(500);
   robot.setHeadRpyDeg(0, 0, 35);
-  await sleep(350);
+  await sleep(500);
   robot.setHeadRpyDeg(0, 0, 0);
-  await sleep(350);                   // settle before capturing frames
+  await sleep(400);                   // settle before capturing frames
   if (!running) return;
 
-  // ── 5. Detect motion (head is now still) ────────────────────────────────
-  const caught = await detectMotion(900);
+  // ── 5. Detect motion — scan 4 s like the official app ───────────────────
+  const caught = await detectMotion(4000);
   if (!running) return;
 
   // ── 6. React ────────────────────────────────────────────────────────────
