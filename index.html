@@ -73,8 +73,9 @@ let running    = false;
 let round      = 0;
 let threshold  = 10;
 let antennaTimer = null;
-let bodyYawDeg  = 0; // tracked body yaw target for interpolation
-let headYawDeg  = 0; // tracked head yaw (relative to body) for interpolation
+let bodyYawDeg  = 0;
+let headPitchDeg = 0;
+let headYawDeg  = 0;
 
 // ── DOM ────────────────────────────────────────────────────────────────────
 const qs = id => document.getElementById(id);
@@ -216,10 +217,26 @@ function stopGame() {
   setPhase('🤖', 'Jeu arrêté', 'Appuie sur Commencer pour rejouer');
 }
 
+// ── Head helpers ───────────────────────────────────────────────────────────
+function setHead(pitch, yaw) {
+  headPitchDeg = pitch;
+  headYawDeg   = yaw;
+  robot.setHeadRpyDeg(0, pitch, yaw);
+}
+
+async function animateHeadTo(toPitch, toYaw, durationMs) {
+  const fromPitch = headPitchDeg, fromYaw = headYawDeg;
+  const steps  = Math.max(1, Math.round(durationMs / 40));
+  const stepMs = durationMs / steps;
+  for (let i = 1; i <= steps; i++) {
+    const t    = i / steps;
+    const ease = t < 0.5 ? 2*t*t : -1+(4-2*t)*t;
+    setHead(fromPitch + (toPitch - fromPitch) * ease, fromYaw + (toYaw - fromYaw) * ease);
+    await sleep(stepMs);
+  }
+}
+
 // ── Turn animations ─────────────────────────────────────────────────────────
-// The WebRTC daemon caps body_yaw around 40°. We compound it with head yaw
-// (max 55°, within the 65° delta limit) for ~95° of total visible rotation.
-// Both axes interpolate together at 25 Hz with ease-in-out.
 
 const DEG         = Math.PI / 180;
 const BODY_TARGET = 160; // daemon clamps to its effective limit (~90°)
@@ -234,7 +251,7 @@ async function animateTurnAway(durationMs) {
     const b    = bStart + (BODY_TARGET - bStart) * ease;
     // Head yaw tracks body yaw in world frame → delta ≈ 0° → no constraint on body
     robot.setTarget({ body_yaw: b * DEG });
-    robot.setHeadRpyDeg(0, 15 * ease, b);
+    setHead(15 * ease, b);
     await sleep(stepMs);
   }
   bodyYawDeg = BODY_TARGET;
@@ -248,12 +265,11 @@ async function animateTurnBack(durationMs) {
     const t    = i / steps;
     const ease = t < 0.5 ? 2*t*t : -1+(4-2*t)*t;
     const b    = bStart * (1 - ease);
-    // Keep head in sync on the way back too
     robot.setTarget({ body_yaw: b * DEG });
-    robot.setHeadRpyDeg(0, 0, b);
+    setHead(0, b);
     await sleep(stepMs);
   }
-  robot.setHeadRpyDeg(0, 0, 0);
+  setHead(0, 0);
   bodyYawDeg = 0;
 }
 
@@ -281,7 +297,7 @@ async function playRound() {
   startAntennaWiggle();
 
   for (let i = 0; i < 3; i++) {
-    robot.setHeadRpyDeg(0, 10 + Math.random() * 15, BODY_TARGET);
+    setHead(10 + Math.random() * 15, BODY_TARGET);
     robot.playSound('count.wav');
     await sleep(600 + Math.random() * 800);
     if (!running) return;
@@ -289,7 +305,7 @@ async function playRound() {
 
   await sleep(200 + Math.random() * 400);
   if (!running) return;
-  robot.setHeadRpyDeg(0, 5, BODY_TARGET);
+  setHead(5, BODY_TARGET);
   robot.playSound('dance1.wav');
   await sleep(800);
   clearAntenna();
@@ -306,11 +322,11 @@ async function playRound() {
   setPhase('🔍', 'Qui a bougé ?', 'IMMOBILES !');
   robot.setAntennasDeg(50, 50);
   robot.playSound('confused1.wav');
-  robot.setHeadRpyDeg(0, 0, -35);
+  setHead(0, -35);
   await sleep(500);
-  robot.setHeadRpyDeg(0, 0, 35);
+  setHead(0, 35);
   await sleep(500);
-  robot.setHeadRpyDeg(0, 0, 0);
+  setHead(0, 0);
   await sleep(400);
   if (!running) return;
 
@@ -320,21 +336,24 @@ async function playRound() {
 
   // ── 6. React ────────────────────────────────────────────────────────────
   if (caught) {
-    // cx/cy in [0,1]: convert centroid to head angles to "accuse" the mover
-    const accuseYaw   = (cx - 0.5) * 70;  // left/right in image → head yaw
-    const accusePitch = (cy - 0.5) * 30;  // top/bottom in image → head pitch
+    // cx/cy in [0,1]: map centroid to head angles (wider range for visibility)
+    const accuseYaw   = (cx - 0.5) * 100; // ±50° left/right
+    const accusePitch = (cy - 0.5) *  50; // ±25° top/bottom
     setPhase('🚨', 'JE T\'AI VU !', 'Tu as perdu !');
     robot.setAntennasDeg(60, 60);
-    robot.setHeadRpyDeg(0, accusePitch, accuseYaw);
+    // Snap up (surprise), then smoothly look at the guilty player
+    setHead(-15, 0);
+    await sleep(150);
+    await animateHeadTo(accusePitch, accuseYaw, 400);
     robot.playSound('impatient1.wav');
     await sleep(2500);
     robot.setAntennasDeg(0, 0);
-    robot.setHeadRpyDeg(0, 0, 0);
-    await sleep(400);
+    await animateHeadTo(0, 0, 400);
+    await sleep(200);
   } else {
     setPhase('✅', 'Bien joué !', 'Personne n\'a bougé');
     robot.setAntennasDeg(0, 0);
-    robot.setHeadRpyDeg(0, 0, 0);
+    await animateHeadTo(0, 0, 300);
     await sleep(600);
   }
 }
@@ -347,14 +366,22 @@ async function detectMotion(duration) {
   const end = Date.now() + duration;
   let prev    = captureFrame();
   let maxDiff = 0;
-  let bestCx  = 0.5, bestCy = 0.5;
+  // Accumulate centroid across all frames, weighted by per-frame diff
+  let sumCx = 0, sumCy = 0, sumW = 0;
+  let alertPlayed = false;
 
   while (Date.now() < end && running) {
     await sleep(80);
     const cur = captureFrame();
     const { diff: d, cx, cy } = diffAndPaint(prev, cur);
-    if (d > maxDiff) { maxDiff = d; bestCx = cx; bestCy = cy; }
+    if (d > maxDiff) maxDiff = d;
+    if (d > 0) { sumCx += cx * d; sumCy += cy * d; sumW += d; }
     setMotionBar(d);
+    // Play alert beep as soon as motion exceeds threshold
+    if (!alertPlayed && d > threshold) {
+      alertPlayed = true;
+      robot.playSound('count.wav');
+    }
     prev = cur;
   }
 
@@ -362,6 +389,8 @@ async function detectMotion(duration) {
   overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
   setMotionBar(0);
   motionValue.textContent = maxDiff.toFixed(1);
+  const bestCx = sumW > 0 ? sumCx / sumW : 0.5;
+  const bestCy = sumW > 0 ? sumCy / sumW : 0.5;
   return { caught: maxDiff > threshold, cx: bestCx, cy: bestCy };
 }
 
