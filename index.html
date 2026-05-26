@@ -36,10 +36,10 @@
 
   <div class="video-wrapper">
     <video id="robot-video" autoplay playsinline muted></video>
-    <!-- Hidden canvas used only for frame capture -->
     <canvas id="motion-canvas" style="display:none"></canvas>
     <div class="video-label">📷 Vue du robot</div>
   </div>
+  <div id="video-debug" class="video-debug"></div>
 
   <div class="motion-section">
     <div class="motion-label">
@@ -95,18 +95,28 @@ const thresholdLine  = qs('threshold-line');
 const thresholdSlider = qs('threshold-slider');
 const thresholdDisplay = qs('threshold-display');
 
+// ── Video — attach early (lazy: wires when track arrives) ─────────────────
+robot.attachVideo(robotVideo);
+
+// Debug: poll video state every second and show it in the UI
+const videoDebug = qs('video-debug');
+setInterval(() => {
+  const s = robotVideo.srcObject;
+  const tracks = s ? s.getVideoTracks() : [];
+  videoDebug.textContent = s
+    ? `flux: ${tracks.length} piste(s) · ${robotVideo.videoWidth}×${robotVideo.videoHeight} · état ${robotVideo.readyState}`
+    : 'pas de flux';
+}, 1000);
+
 // ── SDK events ─────────────────────────────────────────────────────────────
 robot.addEventListener('streaming', () => {
-  robot.attachVideo(robotVideo);
   robotVideo.play().catch(() => {});
   show(gamePanel);
   hide(connectPanel);
   setPhase('🤖', 'Prêt à jouer !', 'Appuie sur Commencer');
 });
 
-// Backup: reattach if the video track arrives after the streaming event
 robot.addEventListener('videoTrack', () => {
-  robot.attachVideo(robotVideo);
   robotVideo.play().catch(() => {});
 });
 

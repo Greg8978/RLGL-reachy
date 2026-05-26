@@ -210,6 +210,15 @@ h1 {
   pointer-events: none;
 }
 
+/* Video debug */
+.video-debug {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  min-height: 16px;
+  margin-top: -6px;
+}
+
 /* Motion meter */
 .motion-section {
   background: var(--card);
