@@ -366,17 +366,18 @@ async function detectMotion(duration) {
   const end = Date.now() + duration;
   let prev    = captureFrame();
   let maxDiff = 0;
-  let bestCx  = 0.5, bestCy = 0.5;
+  // Use last frame where motion exceeded threshold: that's where the player
+  // actually was when caught, not where they started moving from.
+  let lastCx = 0.5, lastCy = 0.5;
   let alertPlayed = false;
 
   while (Date.now() < end && running) {
     await sleep(80);
     const cur = captureFrame();
     const { diff: d, cx, cy } = diffAndPaint(prev, cur);
-    // Track centroid from the peak-motion frame (most signal, least noise)
-    if (d > maxDiff) { maxDiff = d; bestCx = cx; bestCy = cy; }
+    if (d > maxDiff) maxDiff = d;
+    if (d > threshold) { lastCx = cx; lastCy = cy; }
     setMotionBar(d);
-    // Play alert beep as soon as motion first exceeds threshold
     if (!alertPlayed && d > threshold) {
       alertPlayed = true;
       robot.playSound('count.wav');
@@ -388,7 +389,7 @@ async function detectMotion(duration) {
   overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
   setMotionBar(0);
   motionValue.textContent = maxDiff.toFixed(1);
-  return { caught: maxDiff > threshold, cx: bestCx, cy: bestCy };
+  return { caught: maxDiff > threshold, cx: lastCx, cy: lastCy };
 }
 
 // Capture the current video frame onto the hidden canvas
