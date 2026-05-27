@@ -312,9 +312,16 @@ async function pointAccuse(cx, cy, speedMs = 400) {
   const yaw   = (0.5 - cx) * 85;
   const pitch = (cy - 0.5) * 42.5;
   accuseDebug.textContent = `cible cx=${cx.toFixed(2)} cy=${cy.toFixed(2)} → yaw=${yaw.toFixed(1)}° pitch=${pitch.toFixed(1)}°`;
-  setHead(-15, 0);
-  await sleep(150);
-  await animateHeadTo(pitch, yaw, speedMs);
+  const alreadyAimed = Math.abs(headYawDeg - yaw) < 15 && Math.abs(headPitchDeg - pitch) < 10;
+  if (alreadyAimed) {
+    // Head is already on target from real-time tracking — just confirm with a small snap
+    await animateHeadTo(pitch - 5, yaw, 120);
+    await animateHeadTo(pitch, yaw, 120);
+  } else {
+    setHead(-15, 0);
+    await sleep(150);
+    await animateHeadTo(pitch, yaw, speedMs);
+  }
 }
 
 async function reactCaught(cx, cy) {
@@ -537,12 +544,18 @@ async function detectMotion(duration) {
     const cur = captureFrame();
     const { diff: d, cx, cy, wsum } = diffAndPaint(prev, cur);
     if (d > maxDiff) maxDiff = d;
-    if (wsum > 0) { lastCx = cx; lastCy = cy; } // crosshair is visible → real position
-    setMotionBar(d);
-    if (!alertPlayed && d > threshold) {
-      alertPlayed = true;
-      robot.playSound('count.wav');
+    if (wsum > 0) {
+      lastCx = cx; lastCy = cy;
+      if (d > threshold) {
+        // Real-time head tracking: look at the motion as it happens
+        setHead((cy - 0.5) * 42.5, (0.5 - cx) * 85);
+        if (!alertPlayed) {
+          alertPlayed = true;
+          robot.playSound('count.wav');
+        }
+      }
     }
+    setMotionBar(d);
     prev = cur;
   }
 
