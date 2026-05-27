@@ -117,10 +117,15 @@ setInterval(() => {
 }, 1000);
 
 // ── SDK events ─────────────────────────────────────────────────────────────
-robot.addEventListener('streaming', () => {
+robot.addEventListener('streaming', async () => {
   robotVideo.play().catch(() => {});
   show(gamePanel);
   hide(connectPanel);
+  setPhase('⏳', 'Préparation…', '');
+  // Activate motors once at connection time so game start has no snap
+  await robot.setMotorMode('enabled');
+  robot.setTarget({ body_yaw: 0 });
+  await animateHeadTo(0, 0, 1200);
   setPhase('🤖', 'Prêt à jouer !', 'Appuie sur Commencer');
 });
 
@@ -202,10 +207,6 @@ async function startGame() {
   round   = 0;
   btnGame.textContent = '⏹ Arrêter';
   btnGame.classList.add('danger');
-  // Force "enabled" so body_rotation responds to position commands.
-  // ensureAwake() uses gravity_compensation which lets the head float
-  // but may block body yaw commands.
-  await robot.setMotorMode('enabled');
   gameLoop();
 }
 
