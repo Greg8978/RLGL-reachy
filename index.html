@@ -334,7 +334,7 @@ async function playRound() {
   setHead(0, 35);
   await sleep(500);
   setHead(0, 0);
-  await sleep(1400); // extra 1s for robot to fully settle before detection
+  await sleep(900); // extra 0.5s for robot to fully settle before detection
   if (!running) return;
 
   // ── 5. Detect motion (4 s) ──────────────────────────────────────────────
