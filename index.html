@@ -281,6 +281,148 @@ async function animateTurnBack(durationMs) {
   bodyYawDeg = 0;
 }
 
+// ── Round helpers ─────────────────────────────────────────────────────────────
+const rnd        = ()      => Math.random();
+const rndBetween = (a, b)  => a + rnd() * (b - a);
+
+async function animatePartialTurn(targetAngle, durationMs) {
+  const bStart = bodyYawDeg;
+  const steps  = Math.max(1, Math.round(durationMs / 40));
+  const stepMs = durationMs / steps;
+  for (let i = 1; i <= steps; i++) {
+    const t    = i / steps;
+    const ease = t < 0.5 ? 2*t*t : -1+(4-2*t)*t;
+    const b    = bStart + (targetAngle - bStart) * ease;
+    robot.setTarget({ body_yaw: b * DEG });
+    setHead(8 * ease, b);
+    await sleep(stepMs);
+  }
+  bodyYawDeg = targetAngle;
+}
+
+async function shakeHead(times, amplitude, stepMs) {
+  for (let i = 0; i < times; i++) {
+    setHead(headPitchDeg, amplitude * (i % 2 === 0 ? 1 : -1));
+    await sleep(stepMs);
+  }
+  await animateHeadTo(0, 0, 250);
+}
+
+async function pointAccuse(cx, cy, speedMs = 400) {
+  const yaw   = (0.5 - cx) * 85;
+  const pitch = (cy - 0.5) * 42.5;
+  accuseDebug.textContent = `cible cx=${cx.toFixed(2)} cy=${cy.toFixed(2)} → yaw=${yaw.toFixed(1)}° pitch=${pitch.toFixed(1)}°`;
+  setHead(-15, 0);
+  await sleep(150);
+  await animateHeadTo(pitch, yaw, speedMs);
+}
+
+async function reactCaught(cx, cy) {
+  setPhase('🚨', 'JE T\'AI VU !', 'Tu as perdu !');
+  const style = Math.floor(rnd() * 3);
+
+  if (style === 0) {
+    // Surpris — recule, antennes écartées, pointe
+    robot.setAntennasDeg(70, 70);
+    await pointAccuse(cx, cy, 600);
+    robot.playSound('confused1.wav');
+    await sleep(2200);
+  } else if (style === 1) {
+    // Énervé — secoue la tête + vibre les antennes, puis pointe
+    robot.setAntennasDeg(60, 60);
+    robot.playSound('impatient1.wav');
+    await shakeHead(6, 25, 110);
+    await pointAccuse(cx, cy, 300);
+    let at = 0;
+    const vib = setInterval(() => {
+      robot.setAntennasDeg(60 + 20 * Math.sin(at * 0.8), 60 - 20 * Math.sin(at * 0.8));
+      at++;
+    }, 80);
+    await sleep(1400);
+    clearInterval(vib);
+  } else {
+    // Moqueur — pointe lentement, son dance
+    robot.setAntennasDeg(40, 40);
+    await pointAccuse(cx, cy, 1000);
+    robot.playSound('dance1.wav');
+    await sleep(2400);
+  }
+
+  robot.setAntennasDeg(0, 0);
+  await animateHeadTo(0, 0, 400);
+  await sleep(300);
+}
+
+async function reactNotCaught() {
+  const style = Math.floor(rnd() * 3);
+
+  if (style === 0) {
+    // Déçu — tête vers le bas, antennes tombantes
+    setPhase('😔', 'Bien joué…', 'Personne n\'a bougé ?');
+    robot.setAntennasDeg(-30, -30);
+    await animateHeadTo(22, 0, 500);
+    await sleep(900);
+    robot.setAntennasDeg(0, 0);
+    await animateHeadTo(0, 0, 400);
+  } else if (style === 1) {
+    // Suspicieux — scan supplémentaire lent
+    setPhase('🤨', 'Hm…', 'Je vous surveille.');
+    robot.setAntennasDeg(30, 30);
+    await animateHeadTo(0, -40, 700);
+    await sleep(400);
+    await animateHeadTo(0, 40, 1000);
+    await sleep(400);
+    await animateHeadTo(0, 0, 600);
+    robot.setAntennasDeg(0, 0);
+  } else {
+    // Impatient — hochements rapides
+    setPhase('✅', 'Bien joué !', 'Personne n\'a bougé');
+    robot.setAntennasDeg(0, 0);
+    for (let i = 0; i < 5; i++) {
+      await animateHeadTo(i % 2 === 0 ? 12 : -4, 0, 130);
+    }
+    await animateHeadTo(0, 0, 200);
+  }
+  await sleep(500);
+}
+
+async function reactFakeAlarm() {
+  // D — antennes en alerte, tête qui pointe au hasard, puis "non non"
+  setPhase('👀', 'Attends…', 'J\'ai cru voir…');
+  robot.setAntennasDeg(70, 70);
+  await animateHeadTo(-10, (rnd() - 0.5) * 60, 350);
+  await sleep(900);
+  await shakeHead(4, 20, 140);
+  robot.setAntennasDeg(0, 0);
+  setPhase('🔍', 'Fausse alerte…', 'Vous avez eu chaud !');
+  await sleep(700);
+}
+
+async function doDoubleScan() {
+  // C — feint de repartir, revient surprendre
+  if (!running) return;
+  setPhase('🔄', 'Je repars…', '');
+  robot.setAntennasDeg(-15, -15);
+  await animatePartialTurn(rndBetween(30, 50), 500);
+  if (!running) return;
+  await sleep(rndBetween(250, 450));
+  setPhase('👀', '…SOLEIL !', '');
+  robot.setAntennasDeg(60, 60);
+  await animateTurnBack(280);
+  await sleep(900);
+  if (!running) return;
+  const { caught, cx, cy } = await detectMotion(2500);
+  if (!running) return;
+  if (caught) {
+    await reactCaught(cx, cy);
+  } else {
+    setPhase('✅', 'OK, cette fois…', '');
+    robot.setAntennasDeg(0, 0);
+    await animateHeadTo(0, 0, 300);
+    await sleep(400);
+  }
+}
+
 // ── Game loop ──────────────────────────────────────────────────────────────
 async function gameLoop() {
   while (running) {
@@ -292,41 +434,61 @@ async function gameLoop() {
 }
 
 async function playRound() {
-
-  // ── 1. Turn away — body yaw + head yaw combined (~95° total) ────────────
-  setPhase('🔄', 'Je me retourne…', '');
   clearAntenna();
   robot.setAntennasDeg(-15, -15);
-  await animateTurnAway(2000);
-  if (!running) return;
 
-  // ── 2. Count aloud (head stays turned, only pitch nods) ──────────────────
-  setPhase('🔢', 'Un, deux, trois…', 'Vous pouvez bouger !');
-  startAntennaWiggle();
+  // H. Variable turn speeds each round
+  const turnAwayMs = Math.round(rndBetween(900, 3000));
+  const turnBackMs = Math.round(rndBetween(280, 700));
 
-  for (let i = 0; i < 3; i++) {
-    setHead(10 + Math.random() * 15, BODY_TARGET);
-    robot.playSound('count.wav');
-    await sleep(600 + Math.random() * 800);
+  // A. Fausse volte-face (30% chance) — tourne à moitié puis revient
+  if (rnd() < 0.30) {
+    setPhase('🔄', 'Je me retourne…', '');
+    await animatePartialTurn(rndBetween(50, 80), rndBetween(600, 1000));
     if (!running) return;
+    await sleep(rndBetween(100, 350));
+    setPhase('👀', 'SOLEIL !', '');
+    robot.setAntennasDeg(30, 30);
+    await animateTurnBack(300);
+    await sleep(900);
+    if (!running) return;
+    const { caught, cx, cy } = await detectMotion(3000);
+    if (!running) return;
+    if (caught) await reactCaught(cx, cy); else await reactNotCaught();
+    return;
   }
 
-  await sleep(200 + Math.random() * 400);
+  // ── 1. Turn away ───────────────────────────────────────────────────────
+  setPhase('🔄', 'Je me retourne…', '');
+  await animateTurnAway(turnAwayMs);
+  if (!running) return;
+
+  // ── 2. Count — B. variable (2-5 mots) + G. micro-oscillations ──────────
+  setPhase('🔢', 'Un, deux, trois…', 'Vous pouvez bouger !');
+  startAntennaWiggle();
+  const countN = 2 + Math.floor(rnd() * 4);
+  for (let i = 0; i < countN; i++) {
+    setHead(rndBetween(8, 26), BODY_TARGET + rndBetween(-6, 6));
+    robot.playSound('count.wav');
+    await sleep(rndBetween(500, 1200));
+    if (!running) return;
+  }
+  await sleep(rndBetween(100, 350));
   if (!running) return;
   setHead(5, BODY_TARGET);
   robot.playSound('dance1.wav');
-  await sleep(800);
+  await sleep(rndBetween(600, 1100));
   clearAntenna();
   if (!running) return;
 
-  // ── 3. Snap back — fast 0.5 s ────────────────────────────────────────────
+  // ── 3. Snap back — H. variable ─────────────────────────────────────────
   setPhase('👀', 'SOLEIL !', '');
   robot.setAntennasDeg(30, 30);
-  await animateTurnBack(500);
+  await animateTurnBack(turnBackMs);
   await sleep(300);
   if (!running) return;
 
-  // ── 4. Theatrical head scan ──────────────────────────────────────────────
+  // ── 4. Head scan ────────────────────────────────────────────────────────
   setPhase('🔍', 'Qui a bougé ?', 'IMMOBILES !');
   robot.setAntennasDeg(50, 50);
   robot.playSound('confused1.wav');
@@ -335,35 +497,25 @@ async function playRound() {
   setHead(0, 35);
   await sleep(500);
   setHead(0, 0);
-  await sleep(900); // extra 0.5s for robot to fully settle before detection
+  await sleep(900);
   if (!running) return;
 
-  // ── 5. Detect motion (4 s) ──────────────────────────────────────────────
-  const { caught, cx, cy } = await detectMotion(4000);
+  // ── 5. Detect motion ───────────────────────────────────────────────────
+  const { caught, cx, cy, maxDiff } = await detectMotion(4000);
   if (!running) return;
 
-  // ── 6. React ────────────────────────────────────────────────────────────
+  // ── 6. React ───────────────────────────────────────────────────────────
   if (caught) {
-    // cx/cy in [0,1]: map centroid to head angles (wider range for visibility)
-    const accuseYaw   = (0.5 - cx) * 85; // ±42.5°
-    const accusePitch = (cy - 0.5) * 42.5; // ±21°
-    accuseDebug.textContent = `cible cx=${cx.toFixed(2)} cy=${cy.toFixed(2)} → yaw=${accuseYaw.toFixed(1)}° pitch=${accusePitch.toFixed(1)}°`;
-    setPhase('🚨', 'JE T\'AI VU !', 'Tu as perdu !');
-    robot.setAntennasDeg(60, 60);
-    // Snap up (surprise), then smoothly look at the guilty player
-    setHead(-15, 0);
-    await sleep(150);
-    await animateHeadTo(accusePitch, accuseYaw, 400);
-    robot.playSound('impatient1.wav');
-    await sleep(2500);
-    robot.setAntennasDeg(0, 0);
-    await animateHeadTo(0, 0, 400);
-    await sleep(200);
+    await reactCaught(cx, cy);
   } else {
-    setPhase('✅', 'Bien joué !', 'Personne n\'a bougé');
-    robot.setAntennasDeg(0, 0);
-    await animateHeadTo(0, 0, 300);
-    await sleep(600);
+    // D. Fausse alarme si close to threshold (40% chance)
+    if (maxDiff > threshold * 0.55 && rnd() < 0.40) {
+      await reactFakeAlarm();
+      if (!running) return;
+    }
+    await reactNotCaught();
+    // C. Double scan (25% chance)
+    if (running && rnd() < 0.25) await doDoubleScan();
   }
 }
 
@@ -398,7 +550,7 @@ async function detectMotion(duration) {
   overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
   setMotionBar(0);
   motionValue.textContent = maxDiff.toFixed(1);
-  return { caught: maxDiff > threshold, cx: lastCx, cy: lastCy };
+  return { caught: maxDiff > threshold, cx: lastCx, cy: lastCy, maxDiff };
 }
 
 // Capture the current video frame onto the hidden canvas
