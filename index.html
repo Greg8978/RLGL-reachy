@@ -539,19 +539,34 @@ async function detectMotion(duration) {
   let lastCx = 0.5, lastCy = 0.5;
   let alertPlayed = false;
 
+  let skipFrames = 0; // frames to discard after a head move (camera shift)
+
   while (Date.now() < end && running) {
     await sleep(80);
     const cur = captureFrame();
+
+    if (skipFrames > 0) {
+      // Camera just moved — this frame's diff is camera motion, not player motion
+      skipFrames--;
+      prev = cur;
+      continue;
+    }
+
     const { diff: d, cx, cy, wsum } = diffAndPaint(prev, cur);
     if (d > maxDiff) maxDiff = d;
     if (wsum > 0) {
       lastCx = cx; lastCy = cy;
       if (d > threshold) {
-        // Real-time head tracking: look at the motion as it happens
-        setHead((cy - 0.5) * 42.5, (0.5 - cx) * 85);
         if (!alertPlayed) {
           alertPlayed = true;
           robot.playSound('count.wav');
+        }
+        // Only move head if target shifted enough to be worth it
+        const newYaw   = (0.5 - cx) * 85;
+        const newPitch = (cy - 0.5) * 42.5;
+        if (Math.abs(newYaw - headYawDeg) + Math.abs(newPitch - headPitchDeg) > 5) {
+          setHead(newPitch, newYaw);
+          skipFrames = 2; // discard next 2 frames (camera settling ~160ms)
         }
       }
     }
